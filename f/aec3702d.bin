@@ -1,0 +1,75 @@
+exports.run = {
+   noxious: ['tiktok', 'tikmp3', 'tikwm'],
+   hidden: ['tt'],
+   use: 'link',
+   category: 'downloader',
+   async: async (m, { 
+      clips, 
+      args, 
+      isPrefix, 
+      command 
+   }) => {
+      try {
+         if (!args || !args[0]) {
+            return clips.reply(m.chat, Func.example(isPrefix, command, 'https://vt.tiktok.com/ZS2FST8w4/'), m);
+         }
+         if (!args[0].match('tiktok.com')) {
+            return clips.reply(m.chat, global.status.invalid, m);
+         }
+         clips.sendReact(m.chat, '🕒', m.key);
+         let old = new Date();
+         const link = await fetch(`https://kenshiro-api.vercel.app/api/tiktok?url=${Func.ttFixed(args[0])}`);
+         const json = await link.json()
+         if (!json.status) {
+            return m.reply(Func.jsonFormat(json));
+         }
+         if (command == 'tiktok' || command == 'tt') {
+            if (json.data.photo && json.data.photo.length > 0) {
+               for (let p of json.data.photo) {
+                  clips.sendFile(m.chat, p, 'image.jpg', `🍟 *Fetching* : ${((new Date() - old) * 1)} ms`, m);
+                  await Func.delay(1500);
+               }
+            } 
+            else if (json.data.video) {
+               return clips.sendFile(m.chat, json.data.video, 'video.mp4', 
+               `⼷  *T I K T O K*\n\n` +
+               `  ◎  *Author* : ${json.data.nickname} (@${json.data.author})\n` +
+               `  ◎  *Views* : ${Func.h2k(json.data.views)}\n` +
+               `  ◎  *Likes* : ${Func.h2k(json.data.like)}\n` +
+               `  ◎  *Shares* : ${Func.h2k(json.data.share)}\n` +
+               `  ◎  *Comments* : ${Func.h2k(json.data.comment)}\n` +
+               `  ◎  *Duration* : ${json.data.duration}\n` +
+               `  ◎  *Caption* : ${json.data.title}\n` +
+               `  ◎  *Sound Name* : ${json.data.audio_title}\n` +
+               `  ◎  *Fetching* : ${((new Date() - old) * 1)} ms\n\n` +
+               global.footer, m);
+            }
+         }
+         if (command == 'tikwm') {
+            return clips.sendFile(m.chat, json.data.videoWM, 'video.mp4', 
+            `⼷  *T I K T O K*\n\n` +
+            `  ◎  *Author* : ${json.data.nickname} (@${json.data.author})\n` +
+            `  ◎  *Views* : ${Func.h2k(json.data.views)}\n` +
+            `  ◎  *Likes* : ${Func.h2k(json.data.like)}\n` +
+            `  ◎  *Shares* : ${Func.h2k(json.data.share)}\n` +
+            `  ◎  *Comments* : ${Func.h2k(json.data.comment)}\n` +
+            `  ◎  *Duration* : ${json.data.duration}\n` +
+            `  ◎  *Caption* : ${json.data.title}\n` +
+            `  ◎  *Sound Name* : ${json.data.audio_title}\n` +
+            `  ◎  *Fetching* : ${((new Date() - old) * 1)} ms\n\n` +
+            global.footer, m);
+         }
+         if (command == 'tikmp3') {
+            return !json.data.audio 
+               ? clips.reply(m.chat, global.status.fail, m) 
+               : clips.sendFile(m.chat, json.data.audio, 'audio.mp3', '', m);
+         }
+      } catch (e) {
+         return clips.reply(m.chat, Func.jsonFormat(e), m);
+      }
+   },
+   error: false,
+   limit: true,
+   cache: true,
+   location: __filename
+};
