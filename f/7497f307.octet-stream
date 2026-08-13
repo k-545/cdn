@@ -1,0 +1,21 @@
+[Interface]
+PrivateKey = 4GIF7WmHLNwvNGWsY8v9uMhn5MAy6wmZCLi5Mkqd73E=
+Address = 10.66.66.13/24
+DNS = 1.1.1.1,8.8.8.8
+
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 50
+S2 = 100
+H1 = 2112615044
+H2 = 3641400900
+H3 = 4133943628
+H4 = 3466609064
+
+[Peer]
+PublicKey = 692CvI8V+exhrfBzofx1innWxsDDRA2eHuDcT6GpLVE=
+PresharedKey = 3RNEZ8osCXF2mLjtb4p3hPIWQyFqNQ1iJ+SkGH2P1A8=
+Endpoint = 103.235.72.131:16978
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
