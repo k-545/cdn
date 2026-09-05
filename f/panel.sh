@@ -61,6 +61,7 @@ install_nooktheme() (
   local backup_dir
   local archive=""
   local db_option_file=""
+  local db_dump_partial=""
   local maintenance_enabled=0
   local panel_owner
 
@@ -69,6 +70,7 @@ install_nooktheme() (
     trap - EXIT
 
     [ -n "$db_option_file" ] && rm -f "$db_option_file"
+    [ -n "$db_dump_partial" ] && rm -f "$db_dump_partial"
     [ -n "$archive" ] && rm -f "$archive"
 
     if [ "$maintenance_enabled" -eq 1 ] && [ "$status" -ne 0 ]; then
@@ -80,37 +82,65 @@ install_nooktheme() (
     exit "$status"
   }
 
-  read_panel_env() {
+  write_database_client_config() {
     php -r '
-      $key = $argv[1];
-      $file = $argv[2];
-      foreach (file($file, FILE_IGNORE_NEW_LINES) as $line) {
-          $trimmed = ltrim($line);
-          if ($trimmed === "" || str_starts_with($trimmed, "#")) {
-              continue;
-          }
-          if (!str_starts_with($line, $key . "=")) {
-              continue;
-          }
-          $value = trim(substr($line, strlen($key) + 1));
-          if (strlen($value) >= 2) {
-              $first = $value[0];
-              $last = $value[strlen($value) - 1];
-              if (($first === "\"" && $last === "\"") || ($first === "\047" && $last === "\047")) {
-                  $value = substr($value, 1, -1);
-              }
-          }
-          echo $value;
-          exit(0);
-      }
-    ' "$1" "$panel_path/.env"
-  }
+      $panelPath = $argv[1];
+      $outputFile = $argv[2];
 
-  mysql_option_escape() {
-    local value="$1"
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    printf '%s' "$value"
+      chdir($panelPath);
+      require $panelPath . "/vendor/autoload.php";
+      $app = require $panelPath . "/bootstrap/app.php";
+      $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+      $kernel->bootstrap();
+
+      $connectionName = (string) config("database.default");
+      $connection = $app->make("db")->connection($connectionName);
+      $database = $connection->getConfig();
+      $driver = (string) ($database["driver"] ?? "");
+
+      if (!in_array($driver, ["mysql", "mariadb"], true)) {
+          fwrite(STDERR, "* Cannot create a database backup for unsupported connection: " . $driver . PHP_EOL);
+          exit(2);
+      }
+
+      $databaseName = (string) ($database["database"] ?? "");
+      $username = (string) ($database["username"] ?? "");
+      if ($databaseName === "" || $username === "") {
+          fwrite(STDERR, "* Cannot create a database backup: the resolved database name or username is empty." . PHP_EOL);
+          exit(3);
+      }
+
+      $escape = static function ($value): string {
+          return str_replace(
+              ["\\", "\"", "\n", "\r"],
+              ["\\\\", "\\\"", "\\n", "\\r"],
+              (string) $value
+          );
+      };
+
+      $lines = [
+          "[client]",
+          "user=\"" . $escape($username) . "\"",
+          "password=\"" . $escape($database["password"] ?? "") . "\"",
+      ];
+      $socket = (string) ($database["unix_socket"] ?? "");
+      if ($socket !== "") {
+          $lines[] = "socket=\"" . $escape($socket) . "\"";
+      } else {
+          $host = (string) ($database["host"] ?? "127.0.0.1");
+          $port = (string) ($database["port"] ?? "3306");
+          $lines[] = "host=\"" . $escape($host) . "\"";
+          $lines[] = "port=" . $port;
+      }
+
+      $contents = implode(PHP_EOL, $lines) . PHP_EOL;
+      if (file_put_contents($outputFile, $contents, LOCK_EX) === false) {
+          fwrite(STDERR, "* Cannot write the temporary database client configuration." . PHP_EOL);
+          exit(4);
+      }
+      chmod($outputFile, 0600);
+      echo $databaseName;
+    ' "$panel_path" "$db_option_file"
   }
 
   trap cleanup_nooktheme EXIT
@@ -152,56 +182,18 @@ install_nooktheme() (
   echo "* Backing up the current panel files to $backup_dir."
   tar -czf "$backup_dir/panel-files.tar.gz" -C "$panel_parent" "$panel_name"
 
-  local db_connection
-  local db_host
-  local db_port
-  local db_socket
   local db_database
-  local db_username
-  local db_password
-  local escaped_db_value
-
-  db_connection="$(read_panel_env DB_CONNECTION)"
-  db_host="$(read_panel_env DB_HOST)"
-  db_port="$(read_panel_env DB_PORT)"
-  db_socket="$(read_panel_env DB_SOCKET)"
-  db_database="$(read_panel_env DB_DATABASE)"
-  db_username="$(read_panel_env DB_USERNAME)"
-  db_password="$(read_panel_env DB_PASSWORD)"
-
-  if [ -n "$db_connection" ] && [ "$db_connection" != "mysql" ]; then
-    echo "* Cannot create a database backup for unsupported connection: $db_connection"
-    exit 1
-  fi
-  if [ -z "$db_database" ] || [ -z "$db_username" ]; then
-    echo "* Cannot create a database backup: DB_DATABASE or DB_USERNAME is empty."
-    exit 1
-  fi
-
-  db_host="${db_host:-127.0.0.1}"
-  db_port="${db_port:-3306}"
   db_option_file="$(mktemp "$backup_dir/.mysql-client.XXXXXX")"
   chmod 600 "$db_option_file"
-  {
-    printf '[client]\n'
-    escaped_db_value="$(mysql_option_escape "$db_username")"
-    printf 'user="%s"\n' "$escaped_db_value"
-    escaped_db_value="$(mysql_option_escape "$db_password")"
-    printf 'password="%s"\n' "$escaped_db_value"
-    if [ -n "$db_socket" ]; then
-      escaped_db_value="$(mysql_option_escape "$db_socket")"
-      printf 'socket="%s"\n' "$escaped_db_value"
-    else
-      escaped_db_value="$(mysql_option_escape "$db_host")"
-      printf 'host="%s"\n' "$escaped_db_value"
-      printf 'port=%s\n' "$db_port"
-    fi
-  } >"$db_option_file"
+  db_database="$(write_database_client_config)"
 
   echo "* Backing up the Pterodactyl database."
+  db_dump_partial="$backup_dir/database.sql.partial"
   mysqldump --defaults-extra-file="$db_option_file" \
     --single-transaction --quick --skip-lock-tables "$db_database" \
-    >"$backup_dir/database.sql"
+    >"$db_dump_partial"
+  mv "$db_dump_partial" "$backup_dir/database.sql"
+  db_dump_partial=""
   rm -f "$db_option_file"
   db_option_file=""
 
